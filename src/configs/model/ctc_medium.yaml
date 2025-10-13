@@ -1,0 +1,8 @@
+_target_: src.model.ctc_conformer.CTCConformerModel
+n_feats: 80
+enc_dim: 256
+enc_layers: 16
+enc_heads: 4
+enc_kernel_size: 31
+dec_dim: 640
+dec_layers: 1
