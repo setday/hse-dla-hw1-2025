@@ -1,0 +1,2 @@
+_target_: src.model.rnn_t_conformer.RNNTConformerModel
+n_feats: 128
