@@ -7,6 +7,7 @@ from tqdm.auto import tqdm
 
 from src.datasets.data_utils import inf_loop
 from src.metrics.tracker import MetricTracker
+from src.text_encoder.ctc_text_decoder import TextDecoder
 from src.utils.io_utils import ROOT_PATH
 
 
@@ -73,6 +74,7 @@ class BaseTrainer:
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
         self.text_encoder = text_encoder
+        self.text_decoder = TextDecoder(text_encoder)
         self.batch_transforms = batch_transforms
         self.accum_steps = config.trainer.get("accum_steps", 1)
 

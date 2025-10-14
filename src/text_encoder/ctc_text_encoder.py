@@ -1,6 +1,6 @@
 import re
 from string import ascii_lowercase
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List, Literal
 from collections import defaultdict
 
 import numpy as np
@@ -9,17 +9,28 @@ import torch
 # TODO add BPE, LM, Beam Search support
 
 class CTCTextEncoder:
-    def _create_beams(self, logits: torch.Tensor, beam_width: int = 10, use_lm: bool = False):
+    @staticmethod
+    def _create_beams(
+            ind2char: Dict[int, str],
+            logits: torch.Tensor,
+            beam_width: int = 10,
+            lm_model: Optional[Any] = None,
+            alpha: float = 1.23,
+            beta: float = -0.26
+        ) -> List[Tuple[str, float]]:
         """
         Perform beam search decoding (no LM).
         
         Args:
+            ind2char (Dict[int, str]): Mapping from indices to characters
             logits (torch.Tensor): Logits from Wav2Vec2 model (T, V), where
                 T - number of time steps and
                 V - vocabulary size
             beam_width (int): Number of beams to keep during decoding
-            use_lm (bool): Whether to use language model for rescoring
-        
+            lm_model (Any): External language model with a 'score' method
+            alpha (float): Language model weight
+            beta (float): Word bonus
+
         Returns:
             (str) the best decoded transcript as a string.
 
@@ -46,7 +57,7 @@ class CTCTextEncoder:
                     next_char = ind2char[next_id]
 
                     alpha_bonus, beta_bonus = 0.0, 0.0
-                    if next_id != last_ind and next_id != self.EMPTY_IND:
+                    if next_id != last_ind and next_id != CTCTextEncoder.EMPTY_IND:
                         new_path = prev_path + next_char
 
                         if alpha != 0.0 and lm_model is not None:
@@ -73,12 +84,10 @@ class CTCTextEncoder:
         # --- Beam search implementation ---
         
         probs = torch.softmax(logits, dim=-1)
-        beams = {('', self.EMPTY_IND): 1.0}
-
-        lm = self.decode_lm if use_lm else None
+        beams = {('', CTCTextEncoder.EMPTY_IND): 1.0}
 
         for layer_probs in probs:
-            new_beams = _beam_expand_and_merge_path(beams, layer_probs, self.ind2char, lm, 1.23, -0.26)
+            new_beams = _beam_expand_and_merge_path(beams, layer_probs, ind2char, lm_model, alpha, beta)
             beams = _beam_truncate_paths(new_beams, beam_width)
 
         beams = [(hyp, np.log10(prob + 1e-10)) for (hyp, _), prob in beams.items()]
@@ -119,12 +128,32 @@ class CTCTextEncoder:
     WORD_DELIMITER_TOK = None  # Set to None for character-level, or to specific index for word-level (e.g., space)
     WORD_DELIMITER_IND = None
 
-    def __init__(self, alphabet=None, decode_lm: Optional[Any] = None, **kwargs):
+    def __init__(
+            self,
+            alphabet=None,
+            decode_mode: Literal["greedy", "beam", "beam_lm", "beam_lm_rescore"] = "greedy",
+            decode_lm: Optional[Any] = None,
+            beam_width: Optional[int] = None,
+            alpha: Optional[float] = None,
+            beta: Optional[float] = None,
+            **kwargs
+        ):
         """
         Args:
             alphabet (list): alphabet for language. If None, it will be
                 set to ascii
+            decode_lm (Any): External language model with a 'score' method for decoding
+            beam_width (int): Beam width for beam search decoding
+            alpha (float): LM weight for beam search decoding
+            beta (float): Word bonus for beam search decoding
         """
+
+        assert decode_mode == "greedy" or beam_width is not None, \
+            "Beam width must be specified for beam search decoding."
+        assert decode_mode == "greedy" or (alpha is not None and beta is not None), \
+            "Alpha and beta must be specified for beam search decoding."
+        assert decode_mode in ["greedy", "beam"] or decode_lm is not None, \
+            "Language model must be provided for LM-based decoding."
 
         if alphabet is None:
             alphabet = list(ascii_lowercase + " ")
@@ -135,7 +164,13 @@ class CTCTextEncoder:
         self.ind2char = dict(enumerate(self.vocab))
         self.char2ind = {v: k for k, v in self.ind2char.items()}
 
+        self.decode_mode = decode_mode
+
         self.decode_lm = decode_lm
+
+        self.beam_width = beam_width
+        self.alpha = alpha
+        self.beta = beta
 
     def __len__(self):
         return len(self.vocab)
@@ -184,7 +219,7 @@ class CTCTextEncoder:
             prev = ind
         return "".join(result).strip()
     
-    def logits_decode(self, logits: torch.Tensor, method: str = "greedy") -> str:
+    def logits_decode(self, logits: torch.Tensor) -> str:
         """
         CTC beam search decoding with optional LM rescoring.
         
@@ -201,19 +236,19 @@ class CTCTextEncoder:
             This implementation is based on my AITH homework (whole implementation is mine, except the interfaces).
         """
 
-        if method == "greedy":
+        if self.decode_mode == "greedy":
             maxes = torch.argmax(logits, dim=-1)
             return self.ctc_decode(maxes)
-        elif method == "beam":
-            beams = self._create_beams(logits)
+        elif self.decode_mode == "beam":
+            beams = self._create_beams(self.ind2char, logits, beam_width=self.beam_width, lm_model=None)
             decoded = max(beams, key=lambda x: x[1])[0].strip()
             return decoded
-        elif method == "beam_lm":
-            beams = self._create_beams(logits, use_lm=True)
+        elif self.decode_mode == "beam_lm":
+            beams = self._create_beams(self.ind2char, logits, beam_width=self.beam_width, lm_model=self.decode_lm)
             decoded = max(beams, key=lambda x: x[1])[0].strip()
             return decoded
-        elif method == "beam_lm_rescore":
-            beams = self._create_beams(logits, use_lm=False)
+        elif self.decode_mode == "beam_lm_rescore":
+            beams = self._create_beams(self.ind2char, logits, beam_width=self.beam_width, lm_model=None)
             return self._lm_rescore(beams)
         else:
             raise ValueError("Invalid decoding method. Choose one of 'greedy', 'beam', 'beam_lm', 'beam_lm_rescore'.")

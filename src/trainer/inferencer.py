@@ -1,8 +1,10 @@
 import torch
 from tqdm.auto import tqdm
+from pathlib import Path
 
 from src.metrics.tracker import MetricTracker
 from src.trainer.base_trainer import BaseTrainer
+from src.text_encoder.ctc_text_decoder import TextDecoder
 
 
 class Inferencer(BaseTrainer):
@@ -62,6 +64,7 @@ class Inferencer(BaseTrainer):
         self.batch_transforms = batch_transforms
 
         self.text_encoder = text_encoder
+        self.text_decoder = TextDecoder(text_encoder)
 
         # define dataloaders
         self.evaluation_dataloaders = {k: v for k, v in dataloaders.items()}
@@ -120,42 +123,37 @@ class Inferencer(BaseTrainer):
                 the dataloader (possibly transformed via batch transform)
                 and model outputs.
         """
-        # TODO change inference logic so it suits ASR assignment
-        # and task pipeline
-
         batch = self.move_batch_to_device(batch)
         batch = self.transform_batch(batch)  # transform batch on device -- faster
 
         outputs = self.model(**batch)
         batch.update(outputs)
 
+        decoded_texts = self.text_decoder(**batch)
+        batch.update(decoded_texts)
+
         if metrics is not None:
             for met in self.metrics["inference"]:
                 metrics.update(met.name, met(**batch))
 
-        # Some saving logic. This is an example
-        # Use if you need to save predictions on disk
+        # Save predictions as text files (one per utterance)
+        audio_paths = batch.get("audio_path", [])
+        for i, audio_path in enumerate(audio_paths):
+            utt_id = Path(audio_path).stem
 
-        batch_size = batch["logits"].shape[0]
-        current_id = batch_idx * batch_size
-
-        for i in range(batch_size):
-            # clone because of
-            # https://github.com/pytorch/pytorch/issues/1995
-            logits = batch["logits"][i].clone()
-            label = batch["labels"][i].clone()
-            pred_label = logits.argmax(dim=-1)
-
-            output_id = current_id + i
+            pred = batch["text_predicted"][i]
+            target = batch["text_target"][i]
 
             output = {
-                "pred_label": pred_label,
-                "label": label,
+                "text_target": target,
+                "text_predicted": pred,
             }
+            if metrics is not None:
+                output.update(metrics.latest)
 
             if self.save_path is not None:
                 # you can use safetensors or other lib here
-                torch.save(output, self.save_path / part / f"output_{output_id}.pth")
+                torch.save(output, self.save_path / part / f"output_{utt_id}.pth")
 
         return batch
 
