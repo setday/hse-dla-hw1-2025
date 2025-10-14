@@ -6,12 +6,7 @@ from collections import defaultdict
 import numpy as np
 import torch
 
-# TODO add CTC decode
 # TODO add BPE, LM, Beam Search support
-# Note: think about metrics and encoder
-# The design can be remarkably improved
-# to calculate stuff more efficiently and prettier
-
 
 class CTCTextEncoder:
     def _create_beams(self, logits: torch.Tensor, beam_width: int = 10, use_lm: bool = False):
@@ -48,20 +43,21 @@ class CTCTextEncoder:
             
             for (prev_path, last_ind), prev_prob in dp.items():
                 for next_id, next_char_prob in enumerate(next_token_probs):
-                    if next_id != last_ind and next_id != self.EMPTY_IND:
-                        new_char = ind2char[next_id] if next_id != self.WORD_DELIMITER_IND else ' '
-                        new_path = prev_path + new_char
-                    else:
-                        new_path = prev_path
+                    next_char = ind2char[next_id]
 
                     alpha_bonus, beta_bonus = 0.0, 0.0
-                    if alpha > 0.0 and lm_model is not None:
-                        _, last_word = new_path.rsplit(' ', 1) if ' ' in new_path else (None, new_path) # Get the last word from the hypothesis
-                                                                                                        # We score only the last word since there is no strong connection between the words (this is 3/4-gram LM)
-                        lm_prob = torch.tensor(lm_model.score(last_word, eos=False))                    # Get the LM score for the hypothesis
-                        alpha_bonus = alpha * torch.pow(10, lm_prob)
-                    if beta > 0.0 and next_id == self.WORD_DELIMITER_IND:  # Apply word bonus only for the word delimiter
-                        beta_bonus = beta
+                    if next_id != last_ind and next_id != self.EMPTY_IND:
+                        new_path = prev_path + next_char
+
+                        if alpha != 0.0 and lm_model is not None:
+                            _, last_word = new_path.rsplit(' ', 1) if ' ' in new_path else (None, new_path) # Get the last word from the hypothesis
+                                                                                                            # We score only the last word since there is no strong connection between the words (this is 3/4-gram LM)
+                            lm_prob = torch.tensor(lm_model.score(last_word))                    # Get the LM score for the hypothesis
+                            alpha_bonus = alpha * torch.pow(10, lm_prob)
+                        if beta != 0.0 and next_char == ' ':  # Apply word bonus only for the word delimiter
+                            beta_bonus = beta
+                    else:
+                        new_path = prev_path
 
                     new_dp[(new_path, next_id)] += prev_prob * next_char_prob + alpha_bonus + beta_bonus
 
@@ -82,7 +78,7 @@ class CTCTextEncoder:
         lm = self.decode_lm if use_lm else None
 
         for layer_probs in probs:
-            new_beams = _beam_expand_and_merge_path(beams, layer_probs, self.ind2char, lm)
+            new_beams = _beam_expand_and_merge_path(beams, layer_probs, self.ind2char, lm, 1.23, -0.26)
             beams = _beam_truncate_paths(new_beams, beam_width)
 
         beams = [(hyp, np.log10(prob + 1e-10)) for (hyp, _), prob in beams.items()]
@@ -188,7 +184,7 @@ class CTCTextEncoder:
             prev = ind
         return "".join(result).strip()
     
-    def ctc_logits_decode(self, logits: torch.Tensor, method: str = "greedy") -> str:
+    def logits_decode(self, logits: torch.Tensor, method: str = "greedy") -> str:
         """
         CTC beam search decoding with optional LM rescoring.
         
