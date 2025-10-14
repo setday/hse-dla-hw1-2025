@@ -74,6 +74,7 @@ class BaseTrainer:
         self.lr_scheduler = lr_scheduler
         self.text_encoder = text_encoder
         self.batch_transforms = batch_transforms
+        self.accum_steps = config.trainer.get("accum_steps", 1)
 
         # define dataloaders
         self.train_dataloader = dataloaders["train"]
@@ -208,10 +209,14 @@ class BaseTrainer:
         for batch_idx, batch in enumerate(
             tqdm(self.train_dataloader, desc="train", total=self.epoch_len)
         ):
+            is_zero_grad_step = (batch_idx % self.accum_steps) == 0
+            is_update_step = ((batch_idx + 1) % self.accum_steps) == 0
             try:
                 batch = self.process_batch(
                     batch,
                     metrics=self.train_metrics,
+                    zero_grad=is_zero_grad_step,
+                    update=is_update_step,
                 )
             except torch.cuda.OutOfMemoryError as e:
                 if self.skip_oom:
