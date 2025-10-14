@@ -1,13 +1,24 @@
 defaults:
-  - model: baseline
+  - model: ctc_small
   - metrics: example
-  - datasets: example_eval # we do not want to run inference on training data
-  - dataloader: example
-  - transforms: example
+  - datasets: stable_eval # we do not want to run inference on training data
+  - dataloader: small
+  - transforms: stable
   - _self_
+  
+text_encoder:
+  _target_: src.text_encoder.CTCTextEncoder
+  beam_width: 10
+  alpha: 0.5
+  beta: -0.26
+  decode_mode: "greedy"
+  # decode_lm:
+  #   _target_: src.text_encoder.KenLMLanguageModel
+  #   lm_path: "./models/4-gram.arpa.gz"
+
 inferencer:
-  device_tensors: ["data_object", "labels"] # which tensors should be on device (ex. GPU)
+  device_tensors: ["spectrogram", "text_encoded"]
   device: auto # device name or "auto"
-  save_path: "example" # any name here, can be a dataset name
+  save_path: "eval_result" # any name here, can be a dataset name
   seed: 1
-  from_pretrained: "saved/model_best.pth" # path to the pretrained model
+  from_pretrained: "saved/testing/model_best.pth" # path to the pretrained model

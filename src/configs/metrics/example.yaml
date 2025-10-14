@@ -3,8 +3,6 @@ inference: # metrics that are calculated during inference (eval)
   - _target_: src.metrics.LogitMetric
     name: "CER_(Argmax)"
     loss_fn: "cer"
-    decode_mode: "greedy"
   - _target_: src.metrics.LogitMetric
     name: "WER_(Argmax)"
     loss_fn: "wer"
-    decode_mode: "greedy"

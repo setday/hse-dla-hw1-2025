@@ -28,6 +28,10 @@ loss_function:
 
 text_encoder:
   _target_: src.text_encoder.CTCTextEncoder
+  beam_width: 10
+  alpha: 0.5
+  beta: -0.26
+  decode_mode: "greedy"
   # decode_lm:
   #   _target_: src.text_encoder.KenLMLanguageModel
   #   lm_path: "./models/4-gram.arpa.gz"
