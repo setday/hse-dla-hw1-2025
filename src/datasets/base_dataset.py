@@ -91,13 +91,20 @@ class BaseDataset(Dataset):
 
         spectrogram = self.get_spectrogram(audio_aug)
 
+        if self.instance_transforms is not None and "spectrogram" in self.instance_transforms:
+            spectrogram_aug = self.instance_transforms["spectrogram"](spectrogram)
+        else:
+            spectrogram_aug = spectrogram
+
         instance_data = {
-            "original_audio": audio,
             "audio": audio_aug,
-            "spectrogram": spectrogram,
+            "spectrogram": spectrogram_aug,
             "text": text,
             "text_encoded": text_encoded,
             "audio_path": audio_path,
+            
+            "audio_orig": audio,
+            "spectrogram_orig": spectrogram,
         }
 
         instance_data = self.preprocess_data(instance_data)

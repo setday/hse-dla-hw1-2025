@@ -86,10 +86,14 @@ class Trainer(BaseTrainer):
             self.log_spectrogram(**batch)
             self.log_predictions(**batch)
 
-    def log_spectrogram(self, spectrogram, **batch):
+    def log_spectrogram(self, spectrogram, spectrogram_orig, **batch):
         spectrogram_for_plot = spectrogram[0].detach().cpu()
         image = plot_spectrogram(spectrogram_for_plot)
-        self.writer.add_image("spectrogram", image)
+        self.writer.add_image("spectrogram/augmented", image)
+        
+        spectrogram_orig_for_plot = spectrogram_orig[0].detach().cpu()
+        image_orig = plot_spectrogram(spectrogram_orig_for_plot)
+        self.writer.add_image("spectrogram/original", image_orig)
 
     def log_predictions(
         self, text, log_probs, log_probs_length, audio_path, examples_to_log=10, **batch

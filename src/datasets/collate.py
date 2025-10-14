@@ -45,6 +45,8 @@ def collate_fn(dataset_items: list[dict]):
     batch["text_encoded_length"] = torch.tensor(text_lens)
 
     batch["text"] = [item["text"] for item in dataset_items]
-    batch["original_audio"] = [item["original_audio"] for item in dataset_items]
+
+    batch["audio_orig"] = [item["audio_orig"] for item in dataset_items]
+    batch["spectrogram_orig"] = [item["spectrogram_orig"] for item in dataset_items]
 
     return batch
