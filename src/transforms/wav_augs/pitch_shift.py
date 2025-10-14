@@ -32,7 +32,7 @@ class PitchShift(torch.nn.Module):
         Returns:
             Pitch-shifted audio tensor
         """
-        if not len(data.shape) == 1:
+        if len(data.shape) == 1:
             return self(data.unsqueeze(0)).squeeze(0)
         
         if torch.rand(1).item() > self.p:
