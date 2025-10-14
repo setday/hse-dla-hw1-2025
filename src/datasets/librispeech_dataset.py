@@ -4,7 +4,6 @@ import shutil
 from pathlib import Path
 
 import torchaudio
-import wget
 from tqdm import tqdm
 
 from src.datasets.base_dataset import BaseDataset
@@ -46,6 +45,7 @@ class LibrispeechDataset(BaseDataset):
     def _load_part(self, part):
         arch_path = self._data_dir / f"{part}.tar.gz"
         print(f"Loading part {part}")
+        import wget
         wget.download(URL_LINKS[part], str(arch_path))
         shutil.unpack_archive(arch_path, self._data_dir)
         for fpath in (self._data_dir / "LibriSpeech").iterdir():
