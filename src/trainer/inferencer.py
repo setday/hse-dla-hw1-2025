@@ -144,16 +144,17 @@ class Inferencer(BaseTrainer):
             pred = batch["text_predicted"][i]
             target = batch["text_target"][i]
 
-            output = {
-                "text_target": target,
-                "text_predicted": pred,
-            }
-            if metrics is not None:
-                output.update(metrics.latest)
-
             if self.save_path is not None:
                 # you can use safetensors or other lib here
-                torch.save(output, self.save_path / part / f"output_{utt_id}.pth")
+                with open(self.save_path / part / f"output_{utt_id}.txt", "w", encoding="utf-8") as f:
+                    f.write(f"Target: {target}\n")
+                    f.write(f"Predicted: {pred}\n")
+
+        if self.save_path is not None:
+            metrics_path = self.save_path / part / f"metrics_batch_{batch_idx}.txt"
+            with open(metrics_path, "w", encoding="utf-8") as f:
+                for key, value in metrics.result().items():
+                    f.write(f"{key}: {value}\n")
 
         return batch
 
