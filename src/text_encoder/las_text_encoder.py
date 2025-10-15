@@ -1,17 +1,17 @@
-import re
-from string import ascii_lowercase
 from typing import Any, Dict, Optional, Tuple, List, Literal
 from collections import defaultdict
 
 import numpy as np
 import torch
 
+from src.text_encoder.basic_tokenizer import BasicTokenizer
+
 # TODO add BPE, LM, Beam Search support
 
 class LASTextEncoder:
     @staticmethod
     def _create_beams(
-            ind2char: Dict[int, str],
+            tokenizer: BasicTokenizer,
             logits: torch.Tensor,
             beam_width: int = 10,
             lm_model: Optional[Any] = None,
@@ -43,7 +43,7 @@ class LASTextEncoder:
         def _beam_expand_and_merge_path(
                 dp: Dict[str, float],
                 next_token_probs,
-                ind2char: Dict[int, str],
+                tokenizer: BasicTokenizer,
 
                 lm_model: Optional[Any],
 
@@ -54,10 +54,10 @@ class LASTextEncoder:
             
             for prev_path, prev_prob in dp.items():
                 for next_id, next_char_prob in enumerate(next_token_probs):
-                    next_char = ind2char[next_id]
+                    next_char = tokenizer[next_id]
 
                     alpha_bonus, beta_bonus = 0.0, 0.0
-                    if next_id != LASTextEncoder.EOS_IND:
+                    if next_id != tokenizer.EMPTY_IND:
                         prev_path = prev_path + next_char
 
                         if alpha != 0.0 and lm_model is not None:
@@ -85,7 +85,7 @@ class LASTextEncoder:
         beams = {'': 1.0}
 
         for layer_probs in probs:
-            new_beams = _beam_expand_and_merge_path(beams, layer_probs, ind2char, lm_model, alpha, beta)
+            new_beams = _beam_expand_and_merge_path(beams, layer_probs, tokenizer, lm_model, alpha, beta)
             beams = _beam_truncate_paths(new_beams, beam_width)
 
         beams = [(hyp, np.log10(prob + 1e-10)) for (hyp, _), prob in beams.items()]
@@ -120,12 +120,9 @@ class LASTextEncoder:
 
         return best_hypothesis.strip()
 
-    EOS_TOK = ""
-    EOS_IND = 0
-
     def __init__(
             self,
-            alphabet=None,
+            tokenizer: BasicTokenizer,
             decode_mode: Literal["greedy", "beam", "beam_lm", "beam_lm_rescore"] = "greedy",
             decode_lm: Optional[Any] = None,
             beam_width: Optional[int] = None,
@@ -150,14 +147,7 @@ class LASTextEncoder:
         assert decode_mode in ["greedy", "beam"] or decode_lm is not None, \
             "Language model must be provided for LM-based decoding."
 
-        if alphabet is None:
-            alphabet = list(ascii_lowercase + " ")
-
-        self.alphabet = alphabet
-        self.vocab = [self.EOS_TOK] + list(self.alphabet)
-
-        self.ind2char = dict(enumerate(self.vocab))
-        self.char2ind = {v: k for k, v in self.ind2char.items()}
+        self.tokenizer = tokenizer
 
         self.decode_mode = decode_mode
 
@@ -168,21 +158,13 @@ class LASTextEncoder:
         self.beta = beta
 
     def __len__(self):
-        return len(self.vocab)
+        return len(self.tokenizer)
 
     def __getitem__(self, item: int):
-        assert type(item) is int
-        return self.ind2char[item]
+        return self.tokenizer[item]
 
     def encode(self, text) -> torch.Tensor:
-        text = self.normalize_text(text)
-        try:
-            return torch.Tensor([self.char2ind[char] for char in text]).unsqueeze(0)
-        except KeyError:
-            unknown_chars = set([char for char in text if char not in self.char2ind])
-            raise Exception(
-                f"Can't encode text '{text}'. Unknown chars: '{' '.join(unknown_chars)}'"
-            )
+        return self.tokenizer.encode(text)
 
     def decode(self, inds) -> str:
         """
@@ -194,7 +176,7 @@ class LASTextEncoder:
         Returns:
             raw_text (str): raw text with empty tokens and repetitions.
         """
-        return "".join([self.ind2char[int(ind)] for ind in inds]).strip()
+        return self.tokenizer.decode(inds)
 
     def ctc_decode(self, inds) -> str:
         """
@@ -208,9 +190,9 @@ class LASTextEncoder:
             inds = inds.cpu().numpy().tolist()
         result = []
         for ind in inds:
-            if ind == self.EOS_IND:
+            if ind == self.tokenizer.EMPTY_IND:
                 break
-            result.append(self.ind2char[int(ind)])
+            result.append(self.tokenizer[int(ind)])
         return "".join(result).strip()
     
     def logits_decode(self, logits: torch.Tensor) -> str:
@@ -234,21 +216,15 @@ class LASTextEncoder:
             maxes = torch.argmax(logits, dim=-1)
             return self.ctc_decode(maxes)
         elif self.decode_mode == "beam":
-            beams = self._create_beams(self.ind2char, logits, beam_width=self.beam_width, lm_model=None)
+            beams = self._create_beams(self.tokenizer, logits, beam_width=self.beam_width, lm_model=None)
             decoded = max(beams, key=lambda x: x[1])[0].strip()
             return decoded
         elif self.decode_mode == "beam_lm":
-            beams = self._create_beams(self.ind2char, logits, beam_width=self.beam_width, lm_model=self.decode_lm)
+            beams = self._create_beams(self.tokenizer, logits, beam_width=self.beam_width, lm_model=self.decode_lm)
             decoded = max(beams, key=lambda x: x[1])[0].strip()
             return decoded
         elif self.decode_mode == "beam_lm_rescore":
-            beams = self._create_beams(self.ind2char, logits, beam_width=self.beam_width, lm_model=None)
+            beams = self._create_beams(self.tokenizer, logits, beam_width=self.beam_width, lm_model=None)
             return self._lm_rescore(beams)
         else:
             raise ValueError("Invalid decoding method. Choose one of 'greedy', 'beam', 'beam_lm', 'beam_lm_rescore'.")
-
-    @staticmethod
-    def normalize_text(text: str):
-        text = text.lower()
-        text = re.sub(r"[^a-z ]", "", text)
-        return text

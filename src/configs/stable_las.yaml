@@ -27,6 +27,8 @@ loss_function:
 
 text_encoder:
   _target_: src.text_encoder.LASTextEncoder
+  tokenizer:
+    _target_: src.text_encoder.CharTokenizer
   beam_width: 10
   alpha: 0.5
   beta: -0.26
