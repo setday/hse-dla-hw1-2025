@@ -1,3 +1,4 @@
+from typing import Optional
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -27,12 +28,12 @@ class LasModel(nn.Module):
         super().__init__()
         
         self.encoder = PBLSTMEncoder(n_feats, enc_hidden, enc_layers, enc_dropout)
-        self.decoder = RNNDecoder(n_tokens, enc_hidden * 2, dec_hidden, dec_layers)
+        self.decoder = Speller(n_tokens, enc_hidden, dec_hidden, dec_layers)
         
         self.n_tokens = n_tokens
         self.time_reduction_factor = 2 ** (enc_layers - 1)
 
-    def forward(self, spectrogram, spectrogram_length, **batch):
+    def forward(self, spectrogram, spectrogram_length, text_encoded, text_encoded_length, **batch):
         """
         Model forward method.
 
@@ -43,23 +44,23 @@ class LasModel(nn.Module):
             output (dict): output dict containing log_probs and
                 transformed lengths.
         """
-        encoder_outputs, encoder_lengths = self.encoder(spectrogram, spectrogram_length)
+        spectrogram = spectrogram.mean(dim=1).transpose(1, 2)  # [B, T, F]
+        encoder_outputs, _ = self.encoder(spectrogram, spectrogram_length)
         
-        log_probs = self.decoder(encoder_outputs, encoder_lengths)
-        log_probs_length = self.transform_input_lengths(spectrogram_length)
+        if text_encoded is None:
+            log_probs = self.decoder.generate(encoder_outputs)
+        else:
+            log_probs = self.decoder(encoder_outputs, text_encoded)
+
+        if text_encoded_length is None:
+            text_encoded_length = torch.full(
+                (spectrogram.size(0),),
+                log_probs.size(1),
+                dtype=torch.int32,
+                device=log_probs.device
+            )
         
-        return {"log_probs": log_probs, "log_probs_length": log_probs_length}
-
-    def transform_input_lengths(self, input_lengths):
-        """
-        Calculate output lengths after time reduction in the encoder.
-
-        Args:
-            input_lengths (Tensor): old input lengths
-        Returns:
-            output_lengths (Tensor): new temporal lengths
-        """
-        return torch.ceil(input_lengths.float() / self.time_reduction_factor).int()
+        return {"log_probs": log_probs, "log_probs_length": text_encoded_length}
 
     def __str__(self):
         """
@@ -81,13 +82,20 @@ class Attention(nn.Module):
     """
     Attention mechanism for the LAS model.
     """
-    def __init__(self, enc_dim, dec_dim):
+    def __init__(self, input_dim, hidden_dim):
         super().__init__()
-        
-        self.attn = nn.Linear(enc_dim + dec_dim, dec_dim)
-        self.v = nn.Linear(dec_dim, 1, bias=False)
+
+        self.phi = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.Tanh()
+        )
+
+        self.psi = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Tanh()
+        )
     
-    def forward(self, encoder_outputs, decoder_hidden, mask=None):
+    def forward(self, encoder_outputs, decoder_hidden):
         """
         Calculate attention weights and context vector.
         
@@ -98,22 +106,15 @@ class Attention(nn.Module):
             
         Returns:
             context: Context vector [batch, enc_dim]
-            attention_weights: Attention weights [batch, enc_len]
         """
-        _, enc_len, _ = encoder_outputs.size()
-        
-        decoder_hidden = decoder_hidden.unsqueeze(1).repeat(1, enc_len, 1)
-        
-        energy = torch.tanh(self.attn(torch.cat((decoder_hidden, encoder_outputs), dim=2)))
-        attention_scores = self.v(energy).squeeze(2)
-        
-        if mask is not None:
-            attention_scores = attention_scores.masked_fill(mask == 0, -1e10)
-        
-        attention_weights = F.softmax(attention_scores, dim=1)
+        energy = torch.bmm(
+            self.phi(encoder_outputs),
+            self.psi(decoder_hidden).unsqueeze(2)
+        ).squeeze(2)
+        attention_weights = F.softmax(energy, dim=1)
         context = torch.bmm(attention_weights.unsqueeze(1), encoder_outputs).squeeze(1)
         
-        return context, attention_weights
+        return context
 
 
 class Speller(nn.Module):
@@ -127,17 +128,45 @@ class Speller(nn.Module):
         self.enc_dim = enc_dim
         self.vocab_size = vocab_size
         
-        self.embedding = nn.Embedding(vocab_size, hidden_dim)
-        self.lstm = nn.LSTM(hidden_dim + enc_dim, hidden_dim, num_layers, 
+        self.lstm = nn.LSTM(vocab_size + hidden_dim + 1, hidden_dim, num_layers, 
                            batch_first=True, dropout=dropout if num_layers > 1 else 0)
         
-        self.attention = Attention(enc_dim, hidden_dim)
+        self.attention = Attention(2 * enc_dim, hidden_dim)
+        self.fc_out = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, vocab_size + 1)
+        )
+
+    def step(self, encoder_outputs: torch.Tensor, prev_token_distribution: torch.Tensor,
+             prev_rnn_state: Optional[torch.Tensor] = None, attention_context: Optional[torch.Tensor] = None):
+        """
+        Single decoding step.
+
+        Args:
+            encoder_outputs (Tensor): Outputs from encoder [batch, enc_len, enc_dim]
+            prev_token_distribution (Tensor): Previous token indices [batch]
+            prev_rnn_state (Tuple[Tensor, Tensor], optional): Previous RNN hidden and cell states
+            attention_context (Tensor, optional): Previous attention context vector [batch, enc_dim]
+        Returns:
+            output (Tensor): Logits for the current time step [batch, vocab_size]
+            rnn_state (Tuple[Tensor, Tensor]): Current RNN hidden and cell states
+            attention_context (Tensor): Current attention context vector [batch, enc_dim]
+        """
+        if attention_context is None:
+            attention_context = torch.zeros(encoder_outputs.size(0), self.hidden_dim, device=encoder_outputs.device)
         
-        self.fc_out = nn.Linear(hidden_dim + enc_dim, vocab_size)
+        lstm_input = torch.cat((prev_token_distribution, attention_context), dim=-1)
+        lstm_output, rnn_state = self.lstm(lstm_input, prev_rnn_state)
         
-        self.dropout = nn.Dropout(dropout)
-    
-    def forward(self, encoder_outputs, encoder_lengths):
+        attention_context = self.attention(encoder_outputs, lstm_output)
+        
+        output = torch.cat((lstm_output, attention_context), dim=1)
+        output = self.fc_out(output)
+        
+        return output, rnn_state, attention_context
+
+    def forward(self, encoder_outputs: torch.Tensor, ground_truth: torch.Tensor):
         """
         Simplified forward pass that produces log probabilities for the whole sequence.
         For real deployment, you'd use an autoregressive approach.
@@ -149,43 +178,121 @@ class Speller(nn.Module):
         Returns:
             log_probs: Log probabilities [batch, max_len, vocab_size]
         """
+        sos_id = self.vocab_size  # Start-of-sequence token ID
+
         batch_size = encoder_outputs.size(0)
-        max_enc_len = encoder_outputs.size(1)
+        max_len = ground_truth.size(1)
+        device = encoder_outputs.device
+
+        ground_truth = torch.nn.functional.pad(ground_truth, (1, 0), value=sos_id)  # Pad with SOS
         
-        max_len = max_enc_len
+        inputs_encoded = torch.zeros((batch_size, max_len + 1, self.vocab_size + 1), device=device)
+        inputs_encoded.scatter_(2, ground_truth.unsqueeze(2).to(torch.int32), 1)
+
+        inputs = inputs_encoded[:, 0]  # Initial input is SOS
+        rnn_state, attention_context = None, None
         
-        hidden = self._init_hidden(batch_size, encoder_outputs.device)
+        log_probs = []
         
-        decoder_input = torch.zeros(batch_size, 1, dtype=torch.long, device=encoder_outputs.device)
+        for step in range(max_len):
+            output, rnn_state, attention_context = self.step(
+                encoder_outputs, inputs, rnn_state, attention_context
+            )
+            log_prob = F.log_softmax(output, dim=1)
+            log_probs.append(log_prob.unsqueeze(1))
+
+            if ground_truth is not None and torch.rand((1,)).item() < 0.9:
+                inputs = inputs_encoded[:, step + 1]  # Teacher forcing
+            else:
+                # Sample the next input from the output distribution
+                dist = torch.distributions.Categorical(logits=log_prob)
+                inputs = torch.zeros((batch_size, self.vocab_size + 1), device=device)
+                inputs.scatter_(1, dist.sample().unsqueeze(1), 1)
         
-        outputs = []
-        
-        for _ in range(max_len):
-            embedded = self.embedding(decoder_input).squeeze(1)
-            
-            hidden_for_attn = hidden[0][-1]
-            
-            context, _ = self.attention(encoder_outputs, hidden_for_attn)
-            
-            lstm_input = torch.cat((embedded, context), dim=1).unsqueeze(1)
-            
-            lstm_output, hidden = self.lstm(lstm_input, hidden)
-            
-            output = torch.cat((lstm_output.squeeze(1), context), dim=1)
-            prediction = self.fc_out(output)
-            
-            outputs.append(prediction)
-            
-            decoder_input = prediction.argmax(1).unsqueeze(1)
-        
-        logits = torch.stack(outputs, dim=1)
-        log_probs = F.log_softmax(logits, dim=2)
-        
-        return log_probs
+        log_probs = torch.cat(log_probs, dim=1)
+        return log_probs[ :, 1:, :]  # Exclude SOS from output
     
-    def _init_hidden(self, batch_size, device):
-        """Initialize hidden state"""
-        return (
-            torch.zeros(self.lstm.num_layers, batch_size, self.hidden_dim, device=device),
-            torch.zeros(self.lstm.num_layers, batch_size, self.hidden_dim, device=device)
-        )
+    def generate(self, encoder_outputs: torch.Tensor, max_len: int = 300):
+        """
+        Generate sequence using greedy decoding.
+
+        Args:
+            encoder_outputs (Tensor): Outputs from encoder [batch, enc_len, enc_dim]
+            max_len (int): Maximum length of the generated sequence
+        Returns:
+            generated_ids (Tensor): Generated token IDs [batch, max_len]
+        """
+        sos_id = self.vocab_size  # Start-of-sequence token ID
+
+        batch_size = encoder_outputs.size(0)
+        device = encoder_outputs.device
+
+        inputs = torch.zeros((batch_size, 1, self.vocab_size + 1), device=device)
+        inputs.scatter_(2, torch.full((batch_size, 1), sos_id, device=device), 1)
+
+        rnn_state, attention_context = None, None
+        
+        generated_ids = []
+
+        for _ in range(max_len):
+            output, rnn_state, attention_context = self.step(
+                encoder_outputs, inputs, rnn_state, attention_context
+            )
+            log_prob = F.log_softmax(output, dim=1)
+            predicted_ids = torch.argmax(log_prob, dim=1)
+            generated_ids.append(predicted_ids.unsqueeze(1))
+
+            if (predicted_ids == 0).all():
+                break
+
+            inputs = torch.zeros((batch_size, 1, self.vocab_size + 1), device=device)
+            inputs.scatter_(2, predicted_ids.unsqueeze(1), 1)
+
+        generated_ids = torch.cat(generated_ids, dim=1)
+
+        return generated_ids
+    
+    def generate_beam_search(self, encoder_outputs: torch.Tensor, beam_size: int = 5, max_len: int = 300):
+        """
+        Generate sequence using beam search decoding.
+
+        Args:
+            encoder_outputs (Tensor): Outputs from encoder [batch, enc_len, enc_dim]
+            beam_size (int): Beam size for beam search
+            max_len (int): Maximum length of the generated sequence
+        Returns:
+            generated_ids (List[List[int]]): Generated token IDs for each batch item
+        """
+        sos_id = self.vocab_size  # Start-of-sequence token ID
+
+        batch_size = encoder_outputs.size(0)
+        device = encoder_outputs.device
+
+        generated_ids = []
+
+        for b in range(batch_size):
+            beams = [( [sos_id], 0.0, None, None )]  # (tokens, score, rnn_state, attention_context)
+
+            for _ in range(max_len):
+                new_beams = []
+                for tokens, score, rnn_state, attention_context in beams:
+                    inputs = torch.zeros((1, 1, self.vocab_size + 1), device=device)
+                    inputs.scatter_(2, torch.tensor([[tokens[-1]]], device=device), 1)
+
+                    output, new_rnn_state, new_attention_context = self.step(
+                        encoder_outputs[b:b+1], inputs, rnn_state, attention_context
+                    )
+                    log_prob = F.log_softmax(output, dim=1)
+                    topk_log_probs, topk_ids = torch.topk(log_prob, beam_size)
+
+                    for k in range(beam_size):
+                        new_tokens = tokens + [topk_ids[0][k].item()]
+                        new_score = score + topk_log_probs[0][k].item()
+                        new_beams.append((new_tokens, new_score, new_rnn_state, new_attention_context))
+
+                beams = sorted(new_beams, key=lambda x: x[1], reverse=True)[:beam_size]
+
+            best_beam = max(beams, key=lambda x: x[1])
+            generated_ids.append(best_beam[0][1:])  # Exclude SOS
+
+        return generated_ids

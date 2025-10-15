@@ -26,7 +26,7 @@ class PBLSTMEncoder(nn.Module):
         
         for _ in range(1, num_layers):
             self.lstm_layers.append(
-                nn.LSTM(hidden_dim * 2, hidden_dim, 1, bidirectional=True, batch_first=True)
+                nn.LSTM(hidden_dim * 2 * 2, hidden_dim, 1, bidirectional=True, batch_first=True)
             )
         
         self.dropout = nn.Dropout(dropout)
