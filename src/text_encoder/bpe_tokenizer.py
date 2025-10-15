@@ -11,12 +11,14 @@ class BPETokenizer(BasicTokenizer):
             self,
             **kwargs
         ):
+        
+        self.tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
+        vocab = self.tokenizer.get_vocab()
+        training_corpus = [ vocab.keys() ] # Should be a generator of list of texts.
+        self.tokenizer = self.tokenizer.train_new_from_iterator(training_corpus, vocab_size=2000)
 
         self.EMPTY_TOK = "<pad>"
-
-        self.tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
         self.tokenizer.pad_token = self.EMPTY_TOK
-
         self.EMPTY_IND = self.tokenizer.convert_tokens_to_ids(self.EMPTY_TOK)
 
     def __len__(self):
