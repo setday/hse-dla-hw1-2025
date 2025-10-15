@@ -1,8 +1,7 @@
 _target_: src.model.las_model.LasModel
-n_feats: 128
+n_feats: 80
 enc_layers: 3
 enc_hidden: 256
 dec_layers: 1
 dec_hidden: 512
 enc_dropout: 0.1
-dec_dropout: 0.1

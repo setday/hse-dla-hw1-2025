@@ -1,0 +1,52 @@
+defaults:
+  - model: las
+  - writer: wandb
+  - metrics: example
+  - datasets: stable
+  - dataloader: stable
+  - transforms: stable
+  - _self_
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1e-3
+  weight_decay: 1e-6
+  betas: [0.9, 0.98]
+  eps: 1e-9
+
+lr_scheduler:
+  _target_: torch.optim.lr_scheduler.OneCycleLR
+  max_lr: 1e-3
+  pct_start: 0.1
+  steps_per_epoch: ${trainer.epoch_len}
+  epochs: ${trainer.n_epochs}
+  anneal_strategy: cos
+
+loss_function:
+  _target_: src.loss.LASLossWrapper
+
+text_encoder:
+  _target_: src.text_encoder.LASTextEncoder
+  beam_width: 10
+  alpha: 0.5
+  beta: -0.26
+  decode_mode: "greedy"
+  # decode_lm:
+  #   _target_: src.text_encoder.KenLMLanguageModel
+  #   lm_path: "./models/4-gram.arpa.gz"
+
+trainer:
+  log_step: 50
+  n_epochs: 80
+  epoch_len: 800
+  max_grad_norm: 5.0
+  accum_steps: 1
+  device_tensors: ["spectrogram", "text_encoded"]
+  resume_from: null
+  device: auto
+  override: True
+  monitor: "min val_WER_(Argmax)"
+  save_period: 1
+  early_stop: ${trainer.n_epochs}
+  save_dir: "saved"
+  seed: 1
