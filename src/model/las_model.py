@@ -210,7 +210,7 @@ class Speller(nn.Module):
                 inputs.scatter_(1, dist.sample().unsqueeze(1), 1)
         
         log_probs = torch.cat(log_probs, dim=1)
-        return log_probs[ :, 1:, :]  # Exclude SOS from output
+        return log_probs
     
     def generate(self, encoder_outputs: torch.Tensor, max_len: int = 300):
         """
