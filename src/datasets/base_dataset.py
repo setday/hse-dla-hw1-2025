@@ -6,7 +6,7 @@ import torch
 import torchaudio
 from torch.utils.data import Dataset
 
-from src.text_encoder import CTCTextEncoder
+from src.text_encoder.basic_tokenizer import BasicTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +198,7 @@ class BaseDataset(Dataset):
         if max_text_length is not None:
             exceeds_text_length = (
                 np.array(
-                    [len(CTCTextEncoder.normalize_text(el["text"])) for el in index]
+                    [len(BasicTokenizer.normalize_text(el["text"])) for el in index]
                 )
                 >= max_text_length
             )

@@ -22,7 +22,7 @@ class TextDecoder(BaseMetric):
         ]
 
     def transform_targets(self, text: List[str]) -> List[str]:
-        return [self.text_encoder.normalize_text(t) for t in text]
+        return [self.text_encoder.tokenizer.normalize_text(t) for t in text]
 
     def __call__(
         self, log_probs: Tensor, log_probs_length: Tensor, text: List[str], **kwargs
