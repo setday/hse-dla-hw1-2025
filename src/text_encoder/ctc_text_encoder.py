@@ -69,7 +69,7 @@ class CTCTextEncoder:
                     else:
                         new_path = prev_path
 
-                    new_dp[(new_path, next_id)] += prev_prob * next_char_prob + alpha_bonus + beta_bonus
+                    new_dp[(new_path, next_id)] += prev_prob * next_char_prob * (1 + beta_bonus) + alpha_bonus
 
             return new_dp
 
@@ -155,8 +155,8 @@ class CTCTextEncoder:
         self.decode_lm = decode_lm
 
         self.beam_width = beam_width
-        self.alpha = alpha
-        self.beta = beta
+        self.alpha = alpha or 0.0
+        self.beta = beta or 0.0
 
     def __len__(self):
         return len(self.tokenizer)
@@ -218,15 +218,15 @@ class CTCTextEncoder:
             maxes = torch.argmax(logits, dim=-1)
             return self.ctc_decode(maxes)
         elif self.decode_mode == "beam":
-            beams = self._create_beams(self.tokenizer, logits, beam_width=self.beam_width, lm_model=None)
+            beams = self._create_beams(self.tokenizer, logits, beam_width=self.beam_width, lm_model=None, alpha=self.alpha, beta=self.beta)
             decoded = max(beams, key=lambda x: x[1])[0].strip()
             return decoded
         elif self.decode_mode == "beam_lm":
-            beams = self._create_beams(self.tokenizer, logits, beam_width=self.beam_width, lm_model=self.decode_lm)
+            beams = self._create_beams(self.tokenizer, logits, beam_width=self.beam_width, lm_model=self.decode_lm, alpha=self.alpha, beta=self.beta)
             decoded = max(beams, key=lambda x: x[1])[0].strip()
             return decoded
         elif self.decode_mode == "beam_lm_rescore":
-            beams = self._create_beams(self.tokenizer, logits, beam_width=self.beam_width, lm_model=None)
+            beams = self._create_beams(self.tokenizer, logits, beam_width=self.beam_width, lm_model=None, alpha=self.alpha, beta=self.beta)
             return self._lm_rescore(beams)
         else:
             raise ValueError("Invalid decoding method. Choose one of 'greedy', 'beam', 'beam_lm', 'beam_lm_rescore'.")
