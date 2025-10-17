@@ -70,6 +70,27 @@ To run inference (evaluate the model or save predictions):
 python3 inference.py HYDRA_CONFIG_ARGUMENTS
 ```
 
+## Evaluation and Metrics
+
+To calculate WER and CER after running inference:
+
+```bash
+python3 inference.py -cn=CONFIG_NAME inference
+```
+
+Where `PATH_TO_GT` is the directory with ground truth transcriptions and `PATH_TO_PRED` is the directory with predicted transcriptions (one .txt file per utterance).
+
+## Demo Notebook
+
+A Colab-ready demo notebook is provided: `demo_asr.ipynb`.
+
+- It demonstrates installation, checkpoint/resource download, running inference, and metrics calculation.
+- You can also run it on your own dataset by providing a link in the notebook.
+
+## Downloading Checkpoints and Resources
+
+All required model checkpoints and resources can be downloaded using the provided notebook or with a script (see the notebook for example `gdown` usage). Be sure to update the links to your actual checkpoint locations.
+
 ## Credits
 
 This repository is based on a [PyTorch Project Template](https://github.com/Blinorot/pytorch_project_template).
