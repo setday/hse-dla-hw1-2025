@@ -8,17 +8,19 @@ defaults:
   
 text_encoder:
   _target_: src.text_encoder.CTCTextEncoder
-  beam_width: 10
-  alpha: 0.5
-  beta: -0.26
+  tokenizer:
+    _target_: src.text_encoder.CharTokenizer
+  beam_width: 1
+  alpha: 0.0
+  beta: 0.0
   decode_mode: "greedy"
   # decode_lm:
-  #   _target_: src.text_encoder.KenLMLanguageModel
+  #   _target_: src.text_encoder.lm_fusion.kenlm_lm.KenLMLanguageModel
   #   lm_path: "./models/4-gram.arpa.gz"
 
 inferencer:
   device_tensors: ["spectrogram", "text_encoded"]
   device: auto # device name or "auto"
-  save_path: "eval_result" # any name here, can be a dataset name
+  save_path: "eval_result_" # any name here, can be a dataset name
   seed: 1
   from_pretrained: "saved/testing/model_best.pth" # path to the pretrained model
