@@ -56,6 +56,8 @@ Follow these steps to install the project:
 
 ## How To Use
 
+### Training
+
 To train a model, run the following command:
 
 ```bash
@@ -64,32 +66,90 @@ python3 train.py -cn=CONFIG_NAME HYDRA_CONFIG_ARGUMENTS
 
 Where `CONFIG_NAME` is a config from `src/configs` and `HYDRA_CONFIG_ARGUMENTS` are optional arguments.
 
-To run inference (evaluate the model or save predictions):
+### Inference
+
+To run inference on a dataset and save predictions:
 
 ```bash
-python3 inference.py HYDRA_CONFIG_ARGUMENTS
+# On the default evaluation dataset (LibriSpeech test-clean)
+python3 inference.py -cn=inference \
+  inferencer.from_pretrained=path/to/checkpoint.pth
+
+# On a custom directory dataset
+python3 inference.py -cn=inference \
+  datasets=custom_dir \
+  custom_audio_dir=path/to/audio/directory \
+  custom_transcription_dir=path/to/transcriptions/directory \
+  inferencer.from_pretrained=path/to/checkpoint.pth \
+  inferencer.save_path=output_dir_name
 ```
+
+**Custom Directory Format:**
+Your custom dataset should be organized as follows:
+
+```
+my_dataset/
+├── audio/
+│   ├── utterance_001.wav    (or .mp3, .flac, .m4a)
+│   ├── utterance_002.wav
+│   └── ...
+└── transcriptions/  (optional, only needed for metric calculation)
+    ├── utterance_001.txt
+    ├── utterance_002.txt
+    └── ...
+```
+
+Each transcription file should contain a single line with the ground truth text.
 
 ## Evaluation and Metrics
 
-To calculate WER and CER after running inference:
+To calculate WER (Word Error Rate) and CER (Character Error Rate) metrics:
 
 ```bash
-python3 inference.py -cn=CONFIG_NAME inference
+python3 calc_metrics.py \
+  --ground_truth_dir path/to/ground_truth_transcriptions \
+  --predicted_dir path/to/predicted_transcriptions \
+  --verbose
 ```
 
-Where `PATH_TO_GT` is the directory with ground truth transcriptions and `PATH_TO_PRED` is the directory with predicted transcriptions (one .txt file per utterance).
+**Example with inference output:**
+
+```bash
+# First run inference and extract predictions
+python3 inference.py -cn=inference \
+  inferencer.from_pretrained=saved/testing/model_best.pth \
+  inferencer.save_path=demo_results
+
+# Then calculate metrics
+python3 calc_metrics.py \
+  --ground_truth_dir data/saved/demo_results/test \
+  --predicted_dir data/saved/demo_results/predictions \
+  --verbose
+```
+
+The script expects `.txt` files in both directories with matching IDs (utterance IDs without the extension).
 
 ## Demo Notebook
 
-A Colab-ready demo notebook is provided: `demo_asr.ipynb`.
+A comprehensive Colab-ready demo notebook is provided: `demo_asr.ipynb`.
 
-- It demonstrates installation, checkpoint/resource download, running inference, and metrics calculation.
-- You can also run it on your own dataset by providing a link in the notebook.
+This notebook demonstrates the complete workflow:
 
-## Downloading Checkpoints and Resources
+1. **Installation**: Clone the repository and install dependencies
+2. **Setup**: Download pretrained model checkpoints
+3. **Inference Demo**: Run inference on the LibriSpeech test-clean evaluation dataset
+4. **Metrics Calculation**: Calculate WER and CER metrics on inference results
+5. **Custom Dataset**: Run inference on your own custom dataset and evaluate it
 
-All required model checkpoints and resources can be downloaded using the provided notebook or with a script (see the notebook for example `gdown` usage). Be sure to update the links to your actual checkpoint locations.
+The notebook includes:
+- Detailed comments explaining each step
+- Instructions for using Google Drive datasets (Colab-ready)
+- Example usage of both `inference.py` and `calc_metrics.py` scripts
+- Troubleshooting tips
+
+**To run the demo:**
+- In Jupyter/JupyterLab: `jupyter notebook demo_asr.ipynb`
+- In Google Colab: Upload the notebook or open directly from GitHub
 
 ## Credits
 

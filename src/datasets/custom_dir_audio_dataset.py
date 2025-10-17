@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import torchaudio
+
 from src.datasets.base_dataset import BaseDataset
 
 
@@ -7,9 +9,18 @@ class CustomDirAudioDataset(BaseDataset):
     def __init__(self, audio_dir, transcription_dir=None, *args, **kwargs):
         data = []
         for path in Path(audio_dir).iterdir():
-            entry = {}
-            if path.suffix in [".mp3", ".wav", ".flac", ".m4a"]:
+            if path.suffix.lower() in [".mp3", ".wav", ".flac", ".m4a"]:
+                entry = {}
                 entry["path"] = str(path)
+                
+                try:
+                    audio_tensor, sr = torchaudio.load(str(path))
+                    audio_len = audio_tensor.shape[1] / sr
+                    entry["audio_len"] = audio_len
+                except Exception as e:
+                    print(f"Warning: Could not load audio file {path}: {e}")
+                    continue
+                
                 if transcription_dir and Path(transcription_dir).exists():
                     transc_path = Path(transcription_dir) / (path.stem + ".txt")
                     if transc_path.exists():
